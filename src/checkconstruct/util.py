@@ -1,5 +1,5 @@
 import logging
-
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -26,3 +26,7 @@ def simple_tm(dna_string):
             return None
 
     return 2 * count_at + 4 * count_gc
+
+
+def import_primers(primer_tsv):
+    return pd.read_csv(primer_tsv, sep="\t", names=["Name", "Sequence"]).set_index("Name", drop=True)

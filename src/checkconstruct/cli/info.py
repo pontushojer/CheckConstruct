@@ -14,10 +14,6 @@ logger = logging.getLogger(__name__)
 import checkconstruct.util as checkconstruct
 
 
-def import_primers(primer_tsv):
-    return pd.read_csv(primer_tsv, sep="\t", names=["Name", "Sequence"]).set_index("Name", drop=True)
-
-
 def add_info(primers, info_function, keyword_args=dict(), column_name="Unknown", decimals=1):
     """
     Flexible function to add information to pandas dataframe.
@@ -41,7 +37,7 @@ def analyze_homostructures(primers, homodimer_threshold=-5000, hairpin_threshold
 
     for name, primer in primers.iterrows():
         if len(primer["Sequence"]) > 60:
-            logger.info(f'Primer {name} is too long ({len(primer["Sequence"])}bp > 60 bp) for analysis of homostructures. ')
+            logger.warning(f'Primer {name} is too long ({len(primer["Sequence"])}bp > 60 bp) for analysis of homostructures. ')
             continue
 
         hairpin = primer3.calcHairpin(primer["Sequence"], **keyword_args)
@@ -72,11 +68,14 @@ def analyze_heterostructures(primers, heterodimer_threshold=-5000, keyword_args=
     structures = []
 
     names = primers.index.tolist()
+    for name, name2 in itertools.combinations(names, 2):
 
-    for name, name2 in itertools.combinations(names,2):
-
-        seq = primers.at[name,"Sequence"]
-        seq2 = primers.at[name2,"Sequence"]
+        seq = primers.at[name, "Sequence"]
+        seq2 = primers.at[name2, "Sequence"]
+        # At least one primer needs to be shorter than 60 bp.
+        if len(seq) > 60 and len(seq2) > 60:
+            logging.warning(f'Primers {name} and {name2} are too long (> 60 bp) for analysis of heterostructures. ')
+            continue
 
         heterodimer = primer3.calcHeterodimer(seq, seq2, **keyword_args)
 
@@ -124,7 +123,7 @@ def main(args):
         print(f"{option}: {value}")
     print("-"*30)
 
-    primers = import_primers(args.input_file)
+    primers = checkconstruct.import_primers(args.input_file)
 
     # Add size information
     add_info(primers, len, column_name="Size (bp)")
@@ -151,13 +150,14 @@ def main(args):
                                                 keyword_args={'mv_conc': args.mv_conc,
                                                               'dv_conc': args.dv_conc,
                                                               'dna_conc': args.oligo_conc})
+    if homostructures or heterostructures:
+        struct = homostructures + heterostructures
+        struct_df = pd.DataFrame(data=struct, columns=["Name", "Type", "dG (cal/mol)", "Tm (C)"]).set_index("Name")
 
-    struct = homostructures + heterostructures
-    struct_df = pd.DataFrame(data=struct, columns=["Name", "Type", "dG (cal/mol)", "Tm (C)"]).set_index("Name")
-    #struct_df = struct_df.sort_values("dG (cal/mol)")
-
-    with pd.option_context('display.max_rows', 200, 'display.max_columns', None):
-        print(struct_df.to_string())
+        with pd.option_context('display.max_rows', 200, 'display.max_columns', None):
+            print(struct_df.to_string())
+    else:
+        logging.info("No homostructures or heterostructures detected.")
 
     print("-" * 10)
     print('RESULT')
