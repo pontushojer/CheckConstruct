@@ -6,104 +6,79 @@ import pandas as pd
 import logging
 import itertools
 from Bio.Seq import Seq
-import sys
-
 
 logger = logging.getLogger(__name__)
 
-import checkconstruct.util as checkconstruct
 
+def analyze_homostructures(primers, structures, homodimer_threshold=-5000, hairpin_threshold=-1000, mv_conc=None,
+                           dv_conc=None):
+    for primer in primers:
+        checked_seq = primer.seq
+        if len(primer) > 60:
+            logger.warning(f'Primer {primer.name} is too long ({len(primer)}bp > 60 bp) for analysis of '
+                           f'homostructures. ')
+            logger.info(f"Trimming primer to 60 bp by removing bases from 5'-end")
+            checked_seq = primer.seq[-60:]
 
-def add_info(primers, info_function, keyword_args=dict(), column_name="Unknown", decimals=1):
-    """
-    Flexible function to add information to pandas dataframe.
-    :param primers: Dataframe containing sequences for primers/oligos under column 'Sequence".
-    :param info_function: Method/function to be applied on sequence to extract information
-    :param keyword_args: Dict containing keywords and values relating to info_function
-    :param column_name: Name of column to bee added.
-    :param decimals: Number of decimals to round to.
-    """
-    info_list = []
-    for index, row in primers.iterrows():
-        info = info_function(row["Sequence"], **keyword_args)
-        info_list.append(round(info, decimals))
+        keyword_args = {'mv_conc': mv_conc,
+                        'dv_conc': dv_conc,
+                        'dna_conc': primer.conc}
 
-    primers[column_name] = info_list
-
-
-def analyze_homostructures(primers, homodimer_threshold=-5000, hairpin_threshold=-1000, keyword_args=dict()):
-
-    structures = []
-
-    for name, primer in primers.iterrows():
-        if len(primer["Sequence"]) > 60:
-            logger.warning(f'Primer {name} is too long ({len(primer["Sequence"])}bp > 60 bp) for analysis of homostructures. ')
-            continue
-
-        hairpin = primer3.calcHairpin(primer["Sequence"], **keyword_args)
+        hairpin = primer3.calcHairpin(checked_seq, **keyword_args)
 
         if hairpin.structure_found and hairpin.dg < hairpin_threshold:
-            structures.append({
-                "Type": "Hairpin",
-                "dG": round(hairpin.dg,1),
-                "Tm": round(hairpin.tm,1),
-                "Name": name
-            })
+            structures.add_struture(
+                primer.name,
+                "Hairpin",
+                round(hairpin.dg,1),
+                round(hairpin.tm,1)
+            )
 
-        homodimer = primer3.calcHomodimer(primer["Sequence"], **keyword_args)
+        homodimer = primer3.calcHomodimer(checked_seq, **keyword_args)
 
         if homodimer.structure_found and homodimer.dg < homodimer_threshold:
-            structures.append({
-                "Type": "Self-dimer",
-                "dG (cal/mol)": round(homodimer.dg,1),
-                "Tm (C)": round(homodimer.tm,1),
-                "Name": name
-            })
-
-    return structures
+            structures.add_struture(
+                primer.name,
+                "Self-dimer",
+                round(homodimer.dg,1),
+                round(homodimer.tm,1)
+            )
 
 
-def analyze_heterostructures(primers, heterodimer_threshold=-5000, keyword_args=dict()):
-
-    structures = []
-
-    names = primers.index.tolist()
-    for name, name2 in itertools.combinations(names, 2):
-
-        seq = primers.at[name, "Sequence"]
-        seq2 = primers.at[name2, "Sequence"]
+def analyze_heterostructures(primers, structures, heterodimer_threshold=-5000, mv_conc=None, dv_conc=None):
+    for primer1, primer2 in itertools.combinations(primers, 2):
         # At least one primer needs to be shorter than 60 bp.
-        if len(seq) > 60 and len(seq2) > 60:
-            logging.warning(f'Primers {name} and {name2} are too long (> 60 bp) for analysis of heterostructures. ')
+        if len(primer1) > 60 and len(primer2) > 60:
+            logging.warning(f'Primers {primer1.name} and {primer2.name} are too long (> 60 bp) for analysis of '
+                            f'heterostructures. ')
             continue
 
-        heterodimer = primer3.calcHeterodimer(seq, seq2, **keyword_args)
+        keyword_args = {'mv_conc': mv_conc,
+                        'dv_conc': dv_conc,
+                        'dna_conc': max(primer1.conc, primer2.conc)}
+
+        heterodimer = primer3.calcHeterodimer(primer1.seq, primer2.seq, **keyword_args)
 
         if heterodimer.structure_found and heterodimer.dg < heterodimer_threshold:
-            structures.append({
-                "Type": "Heterodimer",
-                "dG (cal/mol)": round(heterodimer.dg,1),
-                "Tm (C)": round(heterodimer.tm,1),
-                "Name": f'{name} and {name2}'
-            })
+            structures.add_struture(
+                f"{primer1.name} and {primer2.name}",
+                "Heterodimer",
+                round(heterodimer.dg,1),
+                round(heterodimer.tm,1)
+            )
 
-        seq2 = Seq(seq2)
-        seq2_revcomp = seq2.reverse_complement()
+        heterodimer2 = primer3.calcHeterodimer(primer1.seq, primer2.seq_revcomp, **keyword_args)
 
-        heterodimer = primer3.calcHeterodimer(seq, str(seq2_revcomp), **keyword_args)
-
-        if heterodimer.structure_found and heterodimer.dg < heterodimer_threshold:
-            structures.append({
-                "Type": "Heterodimer",
-                "dG (cal/mol)": round(heterodimer.dg,1),
-                "Tm (C)": round(heterodimer.tm,1),
-                "Name": f'{name} and revcomp({name2})'
-            })
-
-    return structures
+        if heterodimer2.structure_found and heterodimer2.dg < heterodimer_threshold:
+            structures.add_struture(
+                f"{primer1.name} and revcomp({primer2.name})",
+                "Heterodimer",
+                round(heterodimer2.dg,1),
+                round(heterodimer2.tm,1)
+            )
 
 
-def max_dg(sequence, mv_conc=None, dv_conc=None, dna_conc=None):
+def calc_max_delta_g(sequence, mv_conc=None, dv_conc=None, dna_conc=None):
     seq = Seq(sequence)
     revcomp_seq = seq.reverse_complement()
 
@@ -116,6 +91,85 @@ def max_dg(sequence, mv_conc=None, dv_conc=None, dna_conc=None):
     return heterodimer.dg
 
 
+def import_primers(filename, mv_conc, dv_conc, dna_conc, dntp_conc, salt_corrections_method):
+    primers = list()
+    with open(filename, "r") as file:
+        for line in file:
+            values = line.strip().split("\t")
+            name, sequence = (None, None)
+            conc = dna_conc
+            if len(values) == 3:
+                name, sequence, conc = values
+                conc = float(conc)
+            elif len(values) == 2:
+                name, sequence = values
+            else:
+                logging.error("Wrong file format")
+
+            keyword_args = {
+                'mv_conc': mv_conc,
+                'dv_conc': dv_conc,
+                'dntp_conc': dntp_conc,
+                'dna_conc': conc,
+                'salt_corrections_method': salt_corrections_method
+            }
+
+            tm = primer3.calcTm(sequence, **keyword_args)
+
+            max_delta_g = calc_max_delta_g(sequence, mv_conc=mv_conc, dv_conc=dv_conc, dna_conc=conc)
+
+            primers.append(Primer(name=name, seq=sequence, conc=conc, tm=tm, max_delta_g=max_delta_g))
+
+    return primers
+
+
+class Primer:
+    def __init__(self, name, seq, conc, tm, max_delta_g):
+        self.name = name
+        self.seq = seq
+        self.conc = conc
+        self.tm = tm
+        self.max_dg = max_delta_g
+
+        self.len = len(self.seq)
+        self.gc = round(100 * sum(1 for s in self.seq if s in ["G", "C"]) / self.len, 1)
+        self.seq_revcomp = str(Seq(self.seq).reverse_complement())
+
+    def __len__(self):
+        return self.len
+
+    def to_dict(self):
+        return {
+            "Name": self.name,
+            "Sequence": self.seq,
+            "Size (bp": self.len,
+            "Tm (°C)": self.tm,
+            "GC (%)": self.gc,
+            "Max dG (cal/mol)": self.max_dg
+        }
+
+
+class Structures:
+    def __init__(self):
+        self.list = list()
+        self.columns = ["Name", "Type", "dG (cal/mol)", "Tm (°C)"]
+
+    def add_struture(self, name, structure_type, delta_g, melt_temp):
+        self.list.append({
+            "Name": name,
+            "Type": structure_type,
+            "dG (cal/mol)": delta_g,
+            "Tm (°C)": melt_temp
+        })
+
+    def to_df(self):
+        return pd.DataFrame(data=self.list, columns=self.columns).set_index("Name")
+
+    def print(self, sort_by="Tm (°C)", ascending=False):
+        with pd.option_context('display.max_rows', 200, 'display.max_columns', None):
+            print(self.to_df().sort_values(by=sort_by, ascending=ascending).to_string())
+
+
 def main(args):
     print("SETTINGS USED:")
     print("-" * 30)
@@ -123,56 +177,51 @@ def main(args):
         print(f"{option}: {value}")
     print("-"*30)
 
-    primers = checkconstruct.import_primers(args.input_file)
+    primers = import_primers(args.input_file,
+                             mv_conc=args.mv_conc,
+                             dv_conc=args.dv_conc,
+                             dna_conc=args.oligo_conc,
+                             dntp_conc=args.dntp_conc,
+                             salt_corrections_method=args.salt_corr_method)
 
-    # Add size information
-    add_info(primers, len, column_name="Size (bp)")
+    structures = Structures()
 
-    # Add melting temperature information
-    add_info(primers, primer3.calcTm, column_name="Tm (C)", keyword_args={'mv_conc': args.mv_conc,
-                                                                          'dv_conc': args.dv_conc,
-                                                                          'dntp_conc': args.dntp_conc,
-                                                                          'dna_conc': args.oligo_conc,
-                                                                          'salt_corrections_method': args.salt_corr_method})
+    analyze_homostructures(primers,
+                           structures,
+                           homodimer_threshold=args.homodimer_threshold,
+                           hairpin_threshold=args.hairpin_threshold,
+                           mv_conc=args.mv_conc,
+                           dv_conc=args.dv_conc)
+    if not args.skip_hetero:
+        analyze_heterostructures(primers,
+                                 structures,
+                                 heterodimer_threshold=args.heterodimer_threshold,
+                                 mv_conc=args.mv_conc,
+                                 dv_conc=args.dv_conc)
 
-    # Add info about maximum delta G for sequence (binding to complement).
-    add_info(primers, max_dg, column_name="Max dG (cal/mol)", keyword_args={'mv_conc': args.mv_conc,
-                                                                            'dv_conc': args.dv_conc,
-                                                                            'dna_conc': args.oligo_conc})
-
-    homostructures = analyze_homostructures(primers, homodimer_threshold=args.homodimer_threshold,
-                                            hairpin_threshold=args.hairpin_threshold,
-                                            keyword_args={'mv_conc': args.mv_conc,
-                                                          'dv_conc': args.dv_conc,
-                                                          'dna_conc': args.oligo_conc})
-
-    heterostructures = analyze_heterostructures(primers, heterodimer_threshold=args.heterodimer_threshold,
-                                                keyword_args={'mv_conc': args.mv_conc,
-                                                              'dv_conc': args.dv_conc,
-                                                              'dna_conc': args.oligo_conc})
-    if homostructures or heterostructures:
-        struct = homostructures + heterostructures
-        struct_df = pd.DataFrame(data=struct, columns=["Name", "Type", "dG (cal/mol)", "Tm (C)"]).set_index("Name")
-
-        with pd.option_context('display.max_rows', 200, 'display.max_columns', None):
-            print(struct_df.to_string())
+    if structures.list:
+        structures.print()
+    elif args.skip_hetero:
+        logging.info("No homostructures detected.")
     else:
         logging.info("No homostructures or heterostructures detected.")
 
     print("-" * 10)
     print('RESULT')
     print("-" * 10)
-
+    primers_df = pd.DataFrame.from_records([p.to_dict() for p in primers])
     with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.max_colwidth', 30):
-        print(primers.to_string())
+        print(primers_df.to_string())
 
 
 def add_arguments(parser):
     parser.add_argument("input_file",
-                        help="Input tsv file with primers. Frist column contain primer name and second primer sequence.")
+                        help="Input tsv file with primers. Frist column contain primer name and second primer "
+                             "sequence. There is also the option to add a third column with the concentration "
+                             "(in nM).")
 
     parser.add_argument('-c', '--oligo_conc',
-                        help="Oligo conc (nM)",
+                        help="Oligo conc (nM). Can also be set for each primer individually, see input_file.",
                         default=200,
                         type=float)
 
@@ -199,15 +248,17 @@ def add_arguments(parser):
 
     parser.add_argument('--hairpin_threshold',
                         help="deltaG (cal/mol) threshold for alerting about hairpin.",
-                        default=-2000,
+                        default=-3000,
                         type=int)
 
     parser.add_argument('--homodimer_threshold',
                         help="deltaG (cal/mol) threshold for alerting about homodimer.",
-                        default=-5000,
+                        default=-6000,
                         type=int)
 
     parser.add_argument('--heterodimer_threshold',
                         help="deltaG (cal/mol) threshold for alerting about heterodimer.",
-                        default=-5000,
+                        default=-6000,
                         type=int)
+
+    parser.add_argument("--skip-hetero", default=False, action="store_true", help="Skip heterodimer analysis.")
