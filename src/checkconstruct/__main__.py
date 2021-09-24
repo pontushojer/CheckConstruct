@@ -37,6 +37,12 @@ def main() -> int:
     else:
         module = args.module
         del args.module
+
+        print(f"Running {module.__name__} with options:", file=sys.stderr)
+        for option, value in sorted(vars(args).items()):
+            print(f" {option}: {value}", file=sys.stderr)
+        print("-" * 30, file=sys.stderr)
+
         module.main(args)
 
     return 0

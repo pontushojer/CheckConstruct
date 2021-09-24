@@ -13,6 +13,12 @@ setup(
     python_requires=">=3.6",
     package_dir={"": "src"},
     packages=find_namespace_packages("src"),
+    install_requires=[
+        "biopython",
+        "pandas",
+        "primer3-py",
+        "tqdm",
+    ],
     entry_points={"console_scripts": ["checkconstruct = checkconstruct.__main__:main"]},
     classifiers=[
         "Development Status :: 4 - Beta",
